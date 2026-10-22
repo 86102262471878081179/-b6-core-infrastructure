@@ -5,10 +5,11 @@ WORKDIR /app
 ENV GOPROXY=https://goproxy.cn,direct
 
 COPY go.mod ./
-RUN go mod download
+# Dieser Befehl erstellt automatisch die fehlende go.sum-Datei
+RUN go mod tidy
 COPY . .
 
-# Baut das Paket im aktuellen Verzeichnis (findet automatisch main.go)
+# Baut das Paket im aktuellen Verzeichnis
 RUN go build -o /grok-exporter .
 
 EXPOSE 8081
