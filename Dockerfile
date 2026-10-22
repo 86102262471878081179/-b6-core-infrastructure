@@ -1,17 +1,1 @@
-FROM golang:1.22-alpine
-WORKDIR /app
-
-# Proxy für stabile Downloads
-ENV GOPROXY=https://goproxy.cn,direct
-
-# KOPIERE ZUERST ALLES (wichtig für go mod tidy)
-COPY . .
-
-# Jetzt erst die Abhängigkeiten auflösen
-RUN go mod tidy
-
-# Jetzt kompilieren
-RUN go build -o /grok-exporter .
-
-EXPOSE 8081
-CMD [ "/grok-exporter" ]
+\# Dockerfile for Aragon Ultima Backend FROM python:3.12-slim # Prevent Python from writing .pyc files and enable unbuffered logging ENV PYTHONDONTWRITEBYTECODE=1 ENV PYTHONUNBUFFERED=1 WORKDIR /app # Install system dependencies RUN apt-get update &amp;&amp; apt-get install -y --no-install-recommends curl &amp;&amp; rm -rf /var/lib/apt/lists/\* # Install Python dependencies COPY requirements.txt /app/ RUN pip install --no-cache-dir -r requirements.txt # Copy application source code COPY aragon\_ultima\_backend.py /app/main.py # Expose default API port EXPOSE 8000 # Healthcheck endpoint HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 CMD curl -f http://localhost:8000/ || exit 1 # Run uvicorn server CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
