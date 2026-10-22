@@ -1,12 +1,15 @@
 FROM golang:1.22-alpine
 WORKDIR /app
 
-# Neuer Proxy, um Netzwerkfehler beim Download zu vermeiden
+# Proxy, um Netzwerkfehler beim Download zu vermeiden
 ENV GOPROXY=https://goproxy.cn,direct
 
 COPY go.mod ./
 RUN go mod download
 COPY . .
-RUN go build -o /grok-exporter *.go
+
+# Baut das Paket im aktuellen Verzeichnis (findet automatisch main.go)
+RUN go build -o /grok-exporter .
+
 EXPOSE 8081
 CMD [ "/grok-exporter" ]
