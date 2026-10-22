@@ -1,0 +1,1 @@
+version: '3.8' services: aragon-backend: build: context: . dockerfile: Dockerfile container\_name: aragon\_ultima\_backend restart: always ports: - "8000:8000" environment: - PORT=8000 - ENVIRONMENT=production healthcheck: test: ["CMD", "curl", "-f", "http://localhost:8000/"] interval: 30s timeout: 5s retries: 3 networks: - aragon-net networks: aragon-net: driver: bridge
