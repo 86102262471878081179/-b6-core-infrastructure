@@ -1,114 +1,97 @@
+# uptime_monitor.py
 """
-==============================================================================
-B6-CORE HYPERSYSTEM — AUTOMATED UPTIME & HEALTH MONITOR
-Monitored Endpoints:
-  1. Streamlit Cockpit
-  2. Render API (Krisler Guard)
-==============================================================================
+Watchdog für das Blue Core System.
+Prüft Go-Core, Python-API und Streamlit-Cockpit in einem Loop.
 """
-
-import asyncio
+import httpx
 import time
 import logging
-from typing import Dict, Any, List
-import httpx
+import sys
+from datetime import datetime
 
-# Logging-Konfiguration
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    format="%(asctime)s [WATCHDOG] [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
 )
-logger = logging.getLogger("b6_uptime_monitor")
+log = logging.getLogger("WATCHDOG")
 
-# HIER DEINE ENDPUNKTE EINTRAGEN
-ENDPOINTS: List[Dict[str, Any]] = [
-    {
-        "name": "Streamlit Cockpit UI",
-        "url": "https://black-six-matrix-pam3ly3dahquagxagaif4w.streamlit.app/",
-        "method": "GET",
-        "expected_status": 200,
-    },
-    {
-        "name": "Render Krisler 2.1 API",
-        "url": "https://aragon-backend-api.onrender.com/prompt/check",
-        "method": "POST",
-        "payload": {
-            "prompt": "Uptime Health Check",
-            "domain_code": "0052"
-        },
-        "expected_status": 200,
-    }
-]
+GO_HEALTH    = "http://localhost:8080/health"
+PY_HEALTH    = "http://localhost:8000/health"
+PY_STATS     = "http://localhost:8000/stats"
+STREAMLIT    = "http://localhost:8501"
+CHECK_INTERVAL = 10
+TIMEOUT      = 3.0
 
-class B6UptimeMonitor:
-    def __init__(self, check_interval: int = 60, timeout: float = 15.0):
-        self.check_interval = check_interval
-        self.timeout = timeout
+def check_service(name: str, url: str, is_streamlit: bool = False) -> dict:
+    try:
+        r = httpx.get(url, timeout=TIMEOUT, follow_redirects=True)
+        if r.status_code == 200:
+            if is_streamlit:
+                return {"name": name, "ok": True, "detail": "alive"}
+            try:
+                data = r.json()
+                return {"name": name, "ok": True, "detail": data}
+            except Exception:
+                return {"name": name, "ok": True, "detail": "no-json"}
+        return {"name": name, "ok": False, "detail": f"HTTP {r.status_code}"}
+    except Exception as e:
+        return {"name": name, "ok": False, "detail": str(e)}
 
-    async def check_endpoint(self, client: httpx.AsyncClient, endpoint: Dict[str, Any]) -> Dict[str, Any]:
-        name = endpoint["name"]
-        url = endpoint["url"]
-        method = endpoint["method"]
-        expected = endpoint["expected_status"]
-        payload = endpoint.get("payload", None)
-
-        start_time = time.perf_counter()
-        try:
-            if method == "POST":
-                response = await client.post(url, json=payload, timeout=self.timeout)
+def format_report(results: list) -> str:
+    lines = []
+    for r in results:
+        icon = "✅" if r["ok"] else "❌"
+        if isinstance(r["detail"], dict):
+            if r["name"] == "GO_CORE":
+                lines.append(
+                    f"  {icon} {r['name']:<10} Blöcke={r['detail'].get('worm_block', '?')} "
+                    f"Uptime={r['detail'].get('uptime_seconds', '?')}s"
+                )
+            elif r["name"] == "PY_API":
+                lss = r["detail"].get("lss", {})
+                lines.append(
+                    f"  {icon} {r['name']:<10} Entitäten={r['detail'].get('entities_loaded', '?')} "
+                    f"Bio={lss.get('bio_state', '?')}"
+                )
             else:
-                response = await client.get(url, timeout=self.timeout)
+                lines.append(f"  {icon} {r['name']:<10} {r['detail']}")
+        else:
+            lines.append(f"  {icon} {r['name']:<10} {r['detail']}")
+    return "\n".join(lines)
 
-            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            is_healthy = response.status_code == expected
+def main():
+    log.info("═" * 65)
+    log.info("🚀 BLUE CORE WATCHDOG STARTET")
+    log.info(f"   Intervall: {CHECK_INTERVAL}s | Timeout: {TIMEOUT}s")
+    log.info(f"   Go-Core:   {GO_HEALTH}")
+    log.info(f"   Python:    {PY_HEALTH}")
+    log.info(f"   Streamlit: {STREAMLIT}")
+    log.info("═" * 65)
 
-            status_symbol = "✅ ONLINE" if is_healthy else f"⚠️ DEGRADED ({response.status_code})"
-            
-            logger.info(
-                f"[{status_symbol}] {name} | Latenz: {latency_ms}ms | Status Code: {response.status_code}"
-            )
+    cycle = 0
+    try:
+        while True:
+            cycle += 1
+            results = [
+                check_service("GO_CORE",   GO_HEALTH),
+                check_service("PY_API",    PY_HEALTH),
+                check_service("STREAMLIT", STREAMLIT, is_streamlit=True),
+            ]
 
-            return {
-                "name": name,
-                "url": url,
-                "status": "UP" if is_healthy else "DEGRADED",
-                "status_code": response.status_code,
-                "latency_ms": latency_ms,
-                "error": None
-            }
+            ok_count = sum(1 for r in results if r["ok"])
+            log.info(f"[Cycle {cycle}] {ok_count}/{len(results)} Services OK")
+            print(format_report(results), flush=True)
 
-        except httpx.TimeoutException:
-            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            logger.error(f"[❌ TIMEOUT] {name} | Latenz: >{self.timeout}s")
-            return {
-                "name": name,
-                "url": url,
-                "status": "DOWN",
-                "status_code": 0,
-                "latency_ms": latency_ms,
-                "error": "Request Timeout"
-            }
-        except Exception as e:
-            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            logger.error(f"[❌ ERROR] {name} | Fehler: {str(e)}")
-            return {
-                "name": name,
-                "url": url,
-                "status": "DOWN",
-                "status_code": 0,
-                "latency_ms": latency_ms,
-                "error": str(e)
-            }
+            if ok_count < len(results):
+                log.warning("⚠️ Mindestens ein Service DOWN")
+            else:
+                log.info("✅ Alle Services ONLINE")
 
-    async def run_single_audit(self) -> List[Dict[str, Any]]:
-        """Führt eine parallele Überprüfung aller Endpunkte aus."""
-        logger.info("Starte Auditing aller B6-Core Endpunkte...")
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            tasks = [self.check_endpoint(client, ep) for ep in ENDPOINTS]
-            results = await asyncio.gather(*tasks)
-        return results
+            time.sleep(CHECK_INTERVAL)
+    except KeyboardInterrupt:
+        log.info("Watchdog manuell beendet.")
+        sys.exit(0)
 
 if __name__ == "__main__":
-    monitor = B6UptimeMonitor(check_interval=30)
-    # Einmaligen Audit-Run starten
-    asyncio.run(monitor.run_single_audit())
+    main()
