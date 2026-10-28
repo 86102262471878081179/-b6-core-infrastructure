@@ -1,5 +1,5 @@
-module b6-core/go-exporter
+module bluecore
 
 go 1.22
 
-require github.com/prometheus/client_golang v1.19.0
+require github.com/gorilla/websocket v1.5.1
