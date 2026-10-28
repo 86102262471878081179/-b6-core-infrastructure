@@ -1,1 +1,83 @@
-version: "3.8" services: aragon-backend-v2: build: context: . dockerfile: Dockerfile container\_name: aragon\_ultima\_backend\_v2 ports: - "8000:8000" environment: - PORT=8000 restart: always healthcheck: test: ["CMD", "curl", "-f", "http://localhost:8000/"] interval: 30s timeout: 5s retries: 3 networks: - aragon-net networks: aragon-net: driver: bridge
+version: '3.8'
+
+services:
+  go-core:
+    build:
+      context: .
+      dockerfile: Dockerfile.go
+    container_name: bluecore_go
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - EXPECTED_SEAL=Φ_SOVEREIGN_ROOT_SEAL_EX_TUNC
+      - MASTER_SEAL=850b2ef003f53db90f704b16e54869fc6ba6265eae13aafde9046fe0e4d99dab
+      - ALLOWED_ORIGINS=*
+    networks:
+      - bluecore-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  python-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bluecore_py
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - EXPECTED_SEAL=Φ_SOVEREIGN_ROOT_SEAL_EX_TUNC
+      - ALLOWED_ORIGINS=*
+      - WAL_PATH=/data/b6_ledger.jsonl
+    volumes:
+      - wal_data:/data
+    depends_on:
+      go-core:
+        condition: service_healthy
+    networks:
+      - bluecore-net
+    restart: unless-stopped
+
+  cockpit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bluecore_ui
+    command: streamlit run app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      - YGGDRASIL_BACKEND=http://python-api:8000
+      - YGGDRASIL_SEAL=Φ_SOVEREIGN_ROOT_SEAL_EX_TUNC
+    depends_on:
+      - python-api
+    networks:
+      - bluecore-net
+    restart: unless-stopped
+
+  watchdog:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bluecore_watchdog
+    command: python uptime_monitor.py
+    depends_on:
+      - go-core
+      - python-api
+      - cockpit
+    networks:
+      - bluecore-net
+    restart: unless-stopped
+
+volumes:
+  wal_data:
+
+networks:
+  bluecore-net:
+    driver: bridge
