@@ -1,7 +1,7 @@
 // main.go
 // ═══════════════════════════════════════════════════════════════════════════════
-// YGGDRASIL_OS :: GO BLUE CORE (v26.2.0)
-// Grummel-Dynastie | Dr.Snuggles | BieneMaja | Pumuckl | King_Ghost
+// YGGDRASIL_OS :: GO BLUE CORE (v26.1.0)
+// Vollständige Go-Implementierung des L.S.S. Neuro-Core Backends.
 // ═══════════════════════════════════════════════════════════════════════════════
 package main
 
@@ -25,8 +25,9 @@ import (
 )
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// KONFIGURATION
+// 1. KONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════════
+
 type Config struct {
 	Port          string
 	ExpectedSeal  string
@@ -59,8 +60,9 @@ func getEnv(key, fallback string) string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TYPES
+// 2. TYPES
 // ═══════════════════════════════════════════════════════════════════════════════
+
 type WormBlock struct {
 	Block     int    `json:"block"`
 	Hash      string `json:"hash"`
@@ -76,13 +78,6 @@ type Inmate struct {
 	TS     int64  `json:"ts"`
 }
 
-type Shadow struct {
-	ShadowID   string `json:"shadow_id"`
-	Token      string `json:"token"`
-	Origin     string `json:"origin"`
-	ConsumedAt int64  `json:"consumed_at"`
-}
-
 type ApexRequest struct {
 	Message  string `json:"message"`
 	IsThreat bool   `json:"is_threat"`
@@ -94,27 +89,13 @@ type BrummelRequest struct {
 	AuthSeal string `json:"auth_seal"`
 }
 
-type PumucklRequest struct {
-	Message  string `json:"message"`
-	AuthSeal string `json:"auth_seal"`
-}
-
-type KingGhostRequest struct {
-	Message  string `json:"message"`
-	Origin   string `json:"origin"`
-	AuthSeal string `json:"auth_seal"`
-}
-
 type ApexResponse struct {
 	Status         string                 `json:"status"`
 	BioState       string                 `json:"bio_state"`
 	KortexMode     string                 `json:"kortex_mode"`
 	ThreatLevel    float64                `json:"threat_level"`
-	CoreHits       []string               `json:"core_hits,omitempty"`
-	SubHits        []string               `json:"sub_entity_hits,omitempty"`
+	SignatureHits  []string               `json:"signature_hits,omitempty"`
 	GothamInmate   string                 `json:"gotham_inmate,omitempty"`
-	KingGhostID    string                 `json:"king_ghost_shadow,omitempty"`
-	PumucklChaos   map[string]interface{} `json:"pumuckl_chaos,omitempty"`
 	Wusulum        map[string]interface{} `json:"wusulum,omitempty"`
 	FoucaultResult string                 `json:"foucault_result,omitempty"`
 	XJustizOutput  string                 `json:"xjustiz_output,omitempty"`
@@ -122,8 +103,9 @@ type ApexResponse struct {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// WORM-LEDGER
+// 3. WORM-LEDGER (Thread-Safe, Hash-Chain)
 // ═══════════════════════════════════════════════════════════════════════════════
+
 type Ledger struct {
 	mu      sync.Mutex
 	blocks  []WormBlock
@@ -131,31 +113,43 @@ type Ledger struct {
 	started time.Time
 }
 
-var ledger = &Ledger{last: getEnv("MASTER_SEAL", "850b2ef0"), started: time.Now()}
+var ledger = &Ledger{
+	last:    getEnv("MASTER_SEAL", "850b2ef0"),
+	started: time.Now(),
+}
 
 func (l *Ledger) Append(event, payload string) WormBlock {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
 	next := len(l.blocks) + 1
 	material := fmt.Sprintf("%s|%s|%s|%d", l.last, event, payload, time.Now().UnixNano())
 	h := sha512.Sum512([]byte(material))
 	newHash := hex.EncodeToString(h[:])
+
 	block := WormBlock{
-		Block: next, Hash: newHash, PrevHash: l.last,
-		Event: event, Timestamp: time.Now().Format(time.RFC3339),
+		Block:     next,
+		Hash:      newHash,
+		PrevHash:  l.last,
+		Event:     event,
+		Timestamp: time.Now().Format(time.RFC3339),
 	}
+
 	l.blocks = append(l.blocks, block)
 	if len(l.blocks) > cfg.LedgerCap {
 		l.blocks = l.blocks[len(l.blocks)-cfg.LedgerCap:]
 	}
 	l.last = newHash
+
 	return block
 }
 
 func (l *Ledger) Tail(n int) []WormBlock {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if n > len(l.blocks) { n = len(l.blocks) }
+	if n > len(l.blocks) {
+		n = len(l.blocks)
+	}
 	out := make([]WormBlock, n)
 	copy(out, l.blocks[len(l.blocks)-n:])
 	return out
@@ -164,7 +158,10 @@ func (l *Ledger) Tail(n int) []WormBlock {
 func (l *Ledger) Count() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if len(l.blocks) == 0 { return 0 }
+	// Zähle alle bisherigen Blöcke (nicht nur Ring-Buffer)
+	if len(l.blocks) == 0 {
+		return 0
+	}
 	return l.blocks[len(l.blocks)-1].Block
 }
 
@@ -175,8 +172,9 @@ func (l *Ledger) LastHash() string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// GOTHAM
+// 4. GOTHAM CITY (Arkham Cache)
 // ═══════════════════════════════════════════════════════════════════════════════
+
 type Gotham struct {
 	mu      sync.Mutex
 	inmates []Inmate
@@ -189,8 +187,10 @@ func (g *Gotham) Incarcerate(token, reason string) string {
 	defer g.mu.Unlock()
 	h := sha256.Sum256([]byte(token))
 	id := hex.EncodeToString(h[:])[:8]
-	g.inmates = append(g.inmates, Inmate{ID: id, Token: token, Reason: reason, TS: time.Now().Unix()})
-	log.Printf("[GOTHAM] Inmate %s eingesperrt: %s", id, trunc(reason, 60))
+	g.inmates = append(g.inmates, Inmate{
+		ID: id, Token: token, Reason: reason, TS: time.Now().Unix(),
+	})
+	log.Printf("[GOTHAM] Inmate %s eingesperrt: %s", id, reason[:min(60, len(reason))])
 	return id
 }
 
@@ -209,97 +209,9 @@ func (g *Gotham) List() []Inmate {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// KING_GHOST SANDBOX
+// 5. L.S.S. STATE (Wusulum, Polyvagal, Brummel, Foucault)
 // ═══════════════════════════════════════════════════════════════════════════════
-type KingGhost struct {
-	mu     sync.Mutex
-	shadows []Shadow
-}
 
-var kingGhost = &KingGhost{}
-
-func (k *KingGhost) Consume(token, origin string) string {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	h := sha256.Sum256([]byte(fmt.Sprintf("KINGGHOST_%s_%s", token, origin)))
-	sid := hex.EncodeToString(h[:])[:6]
-	k.shadows = append(k.shadows, Shadow{
-		ShadowID: sid, Token: token, Origin: origin, ConsumedAt: time.Now().Unix(),
-	})
-	log.Printf("[KING_GHOST] Token in Schatten gezogen: %s", sid)
-	return sid
-}
-
-func (k *KingGhost) Count() int {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	return len(k.shadows)
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PUMUCKL CHAOS
-// ═══════════════════════════════════════════════════════════════════════════════
-type Pumuckl struct {
-	mu       sync.Mutex
-	injected []map[string]interface{}
-}
-
-var pumuckl = &Pumuckl{}
-
-func (p *Pumuckl) ChaosWrap(payload string) map[string]interface{} {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	wrapped := rhabarberObfuscate(payload)
-	h := sha256.Sum256([]byte(fmt.Sprintf("PUMUCKL_%s", wrapped)))
-	tid := hex.EncodeToString(h[:])[:8]
-	r := map[string]interface{}{
-		"pumuckl_id":      tid,
-		"wrapped_preview": trunc(wrapped, 24),
-		"chaos_level":     float64(h[0]) / 255.0,
-	}
-	p.injected = append(p.injected, r)
-	return r
-}
-
-func (p *Pumuckl) Count() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return len(p.injected)
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// BIENE MAJA LOCKVOGEL
-// ═══════════════════════════════════════════════════════════════════════════════
-type BieneMaja struct {
-	mu      sync.Mutex
-	tracked []map[string]interface{}
-}
-
-var bieneMaja = &BieneMaja{}
-
-func (b *BieneMaja) DeployHoneypot(ip string) map[string]interface{} {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	h := sha256.Sum256([]byte(fmt.Sprintf("BIENEMAJA_%s_%d", ip, time.Now().UnixNano())))
-	hid := hex.EncodeToString(h[:])[:8]
-	r := map[string]interface{}{
-		"honey_id":       hid,
-		"attacker_ip":    ip,
-		"sting_deployed": true,
-	}
-	b.tracked = append(b.tracked, r)
-	return r
-}
-
-func (b *BieneMaja) Count() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return len(b.tracked)
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// L.S.S. STATE
-// ═══════════════════════════════════════════════════════════════════════════════
 type Polyvagal struct {
 	mu     sync.Mutex
 	stress float64
@@ -334,7 +246,9 @@ func (p *Polyvagal) CoRegulate(amount float64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.stress = maxF(0.0, p.stress-amount)
-	if p.stress < 0.4 { p.state = "VENTRAL_VAGAL" }
+	if p.stress < 0.4 {
+		p.state = "VENTRAL_VAGAL"
+	}
 }
 
 type Wusulum struct {
@@ -354,12 +268,16 @@ func (w *Wusulum) Cycle() map[string]interface{} {
 	material := fmt.Sprintf("%f:%s:%d", attn, w.state, len(w.memory))
 	h := sha256.Sum256([]byte(material))
 	newState := fmt.Sprintf("TOKEN_%s", hex.EncodeToString(h[:])[:8])
-	if len(newState) > 20 { newState = newState[:20] }
+	if len(newState) > 20 {
+		newState = newState[:20]
+	}
 	w.memory = append(w.memory, newState)
 	w.state = newState
 	mh := sha512.Sum512([]byte(strings.Join(w.memory, ",")))
 	return map[string]interface{}{
-		"state": w.state, "attention": attn, "entropy": w.entropy,
+		"state":     w.state,
+		"attention": attn,
+		"entropy":   w.entropy,
 		"worm_hash": hex.EncodeToString(mh[:])[:32],
 	}
 }
@@ -382,7 +300,9 @@ func (b *Brummel) Oscillate() int {
 	defer b.mu.Unlock()
 	b.phase = (b.phase + 1) % 18
 	diff := b.phase - 9
-	if diff < 0 { diff = -diff }
+	if diff < 0 {
+		diff = -diff
+	}
 	return 9 - diff
 }
 
@@ -401,41 +321,30 @@ func FoucaultInvert(token string) string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// GRUMMEL SIGNATURE SCANNER
+// 6. GREMMEL SIGNATURE SCANNER
 // ═══════════════════════════════════════════════════════════════════════════════
-var coreSignatures = []string{
-	"grummel", "brummel", "dummelt",
+
+var signatures = []string{
 	"pissingerkeule", "mettwurst", "rhabarberbarbara",
-	"cargo-kult", "urheberinfo", "§ 839 bgb",
+	"gremmel", "cargo-kult", "urheberinfo", "§ 839 bgb",
+	"brummel", "dummelt",
 }
 
-var subEntities = map[string][]string{
-	"BieneMaja":  {"biene maja", "bienchen", "maja", "summsumm"},
-	"Pumuckl":    {"pumuckl", "kobold", "klabautermann", "chaos-imp"},
-	"King_Ghost": {"king_ghost", "king ghost", "ghost-king", "schattenkönig"},
-	"DrSnuggles": {"dr. snuggles", "dr.snuggles", "snuggles", "cyberlord"},
-}
-
-func ScanSignatures(text string) (bool, []string, []string) {
+func ScanSignatures(text string) (bool, []string) {
 	lower := strings.ToLower(text)
-	var core, subs []string
-	for _, sig := range coreSignatures {
-		if strings.Contains(lower, sig) { core = append(core, sig) }
-	}
-	for entity, kws := range subEntities {
-		for _, kw := range kws {
-			if strings.Contains(lower, kw) {
-				subs = append(subs, entity)
-				break
-			}
+	var hits []string
+	for _, sig := range signatures {
+		if strings.Contains(lower, sig) {
+			hits = append(hits, sig)
 		}
 	}
-	return len(core) > 0 || len(subs) > 0, core, subs
+	return len(hits) > 0, hits
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// XJUSTIZ
+// 7. XJUSTIZ XML GENERATOR
 // ═══════════════════════════════════════════════════════════════════════════════
+
 type XJustizNachricht struct {
 	XMLName xml.Name `xml:"nachricht.straf.0300"`
 	Xmlns   string   `xml:"xmlns,attr"`
@@ -455,58 +364,92 @@ type XJustizFach struct {
 func GenerateXJustiz(token string) string {
 	msg := XJustizNachricht{
 		Xmlns: "http://www.xjustiz.de",
-		Kopf:  XJustizKopf{Zeitpunkt: time.Now().Format("2006-01-02T15:04:05"), Absender: "L.S.S. Wusulum Core (Go/Grummel)"},
-		Fach:  XJustizFach{Token: token},
+		Kopf: XJustizKopf{
+			Zeitpunkt: time.Now().Format("2006-01-02T15:04:05"),
+			Absender:  "L.S.S. Wusulum Core (Go)",
+		},
+		Fach: XJustizFach{Token: token},
 	}
 	out, err := xml.MarshalIndent(msg, "", "  ")
-	if err != nil { return fmt.Sprintf("<error>%s</error>", err.Error()) }
+	if err != nil {
+		return fmt.Sprintf("<error>%s</error>", err.Error())
+	}
 	return string(out)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// APEX CONTROLLER
+// 8. APEX CONTROLLER
 // ═══════════════════════════════════════════════════════════════════════════════
+
 func ProcessApex(req ApexRequest) ApexResponse {
-	isHostile, coreHits, subHits := ScanSignatures(req.Message)
+	// 1. Forensik
+	isHostile, hits := ScanSignatures(req.Message)
 	threat := 0.1
-	if isHostile { threat = 0.8 } else if req.IsThreat { threat = 0.6 }
-
-	bioState := polyvagal.Update(threat)
-	kortexMode := "CREATIVE_MODE"
-	if isHostile || strings.Contains(bioState, "SHUTDOWN") { kortexMode = "DEFENSIVE_MODE" }
-
 	if isHostile {
-		inmate := gotham.Incarcerate(req.Message, fmt.Sprintf("core=%v subs=%v", coreHits, subHits))
-		shadowID := kingGhost.Consume(req.Message, "advocatus_kill")
-		pumucklResult := pumuckl.ChaosWrap(req.Message)
+		threat = 0.8
+	} else if req.IsThreat {
+		threat = 0.6
+	}
+
+	// 2. Biologie
+	bioState := polyvagal.Update(threat)
+
+	// 3. Kortex
+	kortexMode := "CREATIVE_MODE"
+	if isHostile || strings.Contains(bioState, "SHUTDOWN") {
+		kortexMode = "DEFENSIVE_MODE"
+	}
+
+	// 4. Advokatus
+	if isHostile {
+		inmate := gotham.Incarcerate(req.Message, fmt.Sprintf("Signatures: %v", hits))
 		polyvagal.CoRegulate(0.2)
 		return ApexResponse{
-			Status: "CONTAINED", BioState: bioState, ThreatLevel: threat,
-			CoreHits: coreHits, SubHits: subHits,
-			GothamInmate: inmate, KingGhostID: shadowID, PumucklChaos: pumucklResult,
+			Status:        "CONTAINED",
+			BioState:      bioState,
+			ThreatLevel:   threat,
+			SignatureHits: hits,
+			GothamInmate:  inmate,
 		}
 	}
 
+	// 5. Wusulum
 	wusCycle := wusulum.Cycle()
+
+	// 6. Foucault
 	foucaultResult := FoucaultInvert(req.Message)
+
+	// 7. XJustiz
 	xj := GenerateXJustiz(req.Message)
+
+	// 8. Seal
 	block := ledger.Append("APEX_PROCESSED", xj)
+
 	return ApexResponse{
-		Status: "PROCESSED", BioState: bioState, KortexMode: kortexMode,
-		ThreatLevel: threat, Wusulum: wusCycle, FoucaultResult: foucaultResult,
-		XJustizOutput: xj, AsmeSeal: block.Hash,
+		Status:         "PROCESSED",
+		BioState:       bioState,
+		KortexMode:     kortexMode,
+		ThreatLevel:    threat,
+		Wusulum:        wusCycle,
+		FoucaultResult: foucaultResult,
+		XJustizOutput:  xj,
+		AsmeSeal:       block.Hash,
 	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MIDDLEWARE
+// 9. MIDDLEWARE (CORS + Logging)
 // ═══════════════════════════════════════════════════════════════════════════════
+
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", cfg.AllowedOrigin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		if r.Method == "OPTIONS" { w.WriteHeader(http.StatusOK); return }
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -520,19 +463,23 @@ func loggingMiddleware(next http.Handler) http.Handler {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// HANDLERS
+// 10. HANDLERS
 // ═══════════════════════════════════════════════════════════════════════════════
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "HEALTHY", "version": "26.2.0-go",
+		"status":         "HEALTHY",
+		"version":        "26.1.0-go",
 		"uptime_seconds": int(time.Since(ledger.started).Seconds()),
-		"worm_block": ledger.Count(),
+		"worm_block":     ledger.Count(),
 		"worm_last_hash": ledger.LastHash()[:32] + "...",
 		"features": map[string]bool{
-			"wusulum": true, "polyvagal": true, "xjustiz": true,
-			"gotham": true, "websocket": true, "king_ghost": true,
-			"pumuckl": true, "biene_maja": true, "deepseek_booster": true,
+			"wusulum":    true,
+			"polyvagal":  true,
+			"xjustiz":    true,
+			"gotham":     true,
+			"websocket":  true,
 		},
 	})
 }
@@ -541,15 +488,15 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"worm": map[string]interface{}{
-			"total_blocks": ledger.Count(), "ring_size": len(ledger.blocks),
-			"last_hash": ledger.LastHash()[:32] + "...",
+			"total_blocks": ledger.Count(),
+			"ring_size":    len(ledger.blocks),
+			"last_hash":    ledger.LastHash()[:32] + "...",
 		},
 		"lss": map[string]interface{}{
-			"entropy": wusulum.Entropy(), "bio_state": polyvagal.State(),
-			"brummel_phase": brummel.Phase(), "gotham_inmates": gotham.Count(),
-			"king_ghost_shadows": kingGhost.Count(),
-			"pumuckl_injections": pumuckl.Count(),
-			"biene_maja_tracked": bieneMaja.Count(),
+			"entropy":        wusulum.Entropy(),
+			"bio_state":      polyvagal.State(),
+			"brummel_phase":  brummel.Phase(),
+			"gotham_inmates": gotham.Count(),
 		},
 		"uptime_seconds": int(time.Since(ledger.started).Seconds()),
 	})
@@ -559,26 +506,36 @@ func handleLedgerInspect(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	blocks := ledger.Tail(20)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"count": ledger.Count(), "blocks": blocks, "returned": len(blocks),
+		"count":    ledger.Count(),
+		"blocks":   blocks,
+		"returned": len(blocks),
 	})
 }
 
 func handleGotham(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"inmates": gotham.List(), "count": gotham.Count(),
+		"inmates": gotham.List(),
+		"count":   gotham.Count(),
 	})
 }
 
 func handleApex(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" { http.Error(w, "Method not allowed", 405); return }
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	var req ApexRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), 400); return
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	if req.AuthSeal != cfg.ExpectedSeal {
-		w.WriteHeader(403)
-		json.NewEncoder(w).Encode(map[string]string{"status": "403_FORBIDDEN"})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{
+			"status": "403_FORBIDDEN", "detail": "Invalid Seal",
+		})
 		return
 	}
 	resp := ProcessApex(req)
@@ -587,115 +544,104 @@ func handleApex(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleBrummel(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" { http.Error(w, "Method not allowed", 405); return }
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	var req BrummelRequest
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	if req.AuthSeal != cfg.ExpectedSeal {
-		w.WriteHeader(403); json.NewEncoder(w).Encode(map[string]string{"status": "403_FORBIDDEN"}); return
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"status": "403_FORBIDDEN"})
+		return
 	}
 	osc := brummel.Oscillate()
 	h := sha256.Sum256([]byte(fmt.Sprintf("DUMMELT_%s_%d", req.Message, osc)))
 	result := map[string]interface{}{
-		"status": "CONTAINED", "entity": "[0003]",
-		"universe": "Brummel_Grummel_brummelt&_Dummelt",
-		"oscillation_state": osc, "lineage_doctrine": "45[LINEAGE] 65[DOCTRINE]",
-		"dummelt_hash": hex.EncodeToString(h[:])[:16],
+		"status":             "CONTAINED",
+		"entity":             "[0003]",
+		"universe":           "Brummel_Grummel_brummelt&_Dummelt",
+		"oscillation_state":  osc,
+		"lineage_doctrine":   "45[LINEAGE] 65[DOCTRINE]",
+		"dummelt_hash":       hex.EncodeToString(h[:])[:16],
 	}
 	ledger.Append("BRUMMEL_INJECTION_CONTAINED", req.Message)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 }
 
-func handlePumuckl(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" { http.Error(w, "Method not allowed", 405); return }
-	var req PumucklRequest
-	json.NewDecoder(r.Body).Decode(&req)
-	if req.AuthSeal != cfg.ExpectedSeal {
-		w.WriteHeader(403); return
-	}
-	result := pumuckl.ChaosWrap(req.Message)
-	ledger.Append("PUMUCKL_CHAOS", req.Message)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"status": "CHAOS_CONTAINED", "pumuckl": result})
-}
-
-func handleKingGhost(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" { http.Error(w, "Method not allowed", 405); return }
-	var req KingGhostRequest
-	json.NewDecoder(r.Body).Decode(&req)
-	if req.AuthSeal != cfg.ExpectedSeal {
-		w.WriteHeader(403); return
-	}
-	if req.Origin == "" { req.Origin = "external" }
-	sid := kingGhost.Consume(req.Message, req.Origin)
-	ledger.Append("KING_GHOST_CONSUMED", req.Message)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "CONSUMED_TO_SHADOW", "shadow_id": sid, "origin": req.Origin,
-	})
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
-// WEBSOCKET
+// 11. WEBSOCKET TELEMETRIE
 // ═══════════════════════════════════════════════════════════════════════════════
-var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
 
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil { log.Print("upgrade failed: ", err); return }
+	if err != nil {
+		log.Print("upgrade failed: ", err)
+		return
+	}
 	defer conn.Close()
 	log.Println("[WS] Client verbunden")
 
 	for {
 		data := map[string]interface{}{
-			"ts": time.Now().Unix(),
-			"throughput": 250000 + rand.Intn(40000),
-			"latency": 8.5 + rand.Float64()*2.0,
-			"entropy": wusulum.Entropy(),
-			"bio_state": polyvagal.State(),
-			"worm_block": ledger.Count(),
+			"ts":             time.Now().Unix(),
+			"throughput":     250000 + rand.Intn(40000),
+			"latency":        8.5 + rand.Float64()*2.0,
+			"entropy":        wusulum.Entropy(),
+			"bio_state":      polyvagal.State(),
+			"worm_block":     ledger.Count(),
 			"gotham_inmates": gotham.Count(),
-			"king_ghost_shadows": kingGhost.Count(),
-			"pumuckl_injections": pumuckl.Count(),
-			"biene_maja_tracked": bieneMaja.Count(),
-			"brummel_phase": brummel.Phase(),
+			"brummel_phase":  brummel.Phase(),
 		}
 		if err := conn.WriteJSON(data); err != nil {
-			log.Println("[WS] Fehler:", err); return
+			log.Println("[WS] Fehler beim Senden:", err)
+			return
 		}
 		time.Sleep(1500 * time.Millisecond)
 	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// HELPERS
+// 12. MIN/MAX HELPER
 // ═══════════════════════════════════════════════════════════════════════════════
-func trunc(s string, n int) string {
-	if len(s) <= n { return s }
-	return s[:n] + "..."
-}
 
-func rhabarberObfuscate(text string) string {
-	out := make([]rune, 0, len(text))
-	for _, c := range text {
-		shifted := c + 3
-		if shifted > 0x10FFFF || (shifted >= 0xD800 && shifted <= 0xDFFF) {
-			shifted = 0x20 + (c % 0x10FFDF)
-		}
-		out = append(out, shifted)
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
-	return string(out)
+	return b
 }
 
-func min(a, b int) int { if a < b { return a }; return b }
-func minF(a, b float64) float64 { if a < b { return a }; return b }
-func maxF(a, b float64) float64 { if a > b { return a }; return b }
+func minF(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxF(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MAIN
+// 13. MAIN
 // ═══════════════════════════════════════════════════════════════════════════════
+
 func main() {
 	loadConfig()
+
+	// Initial-Block im Ledger
 	ledger.Append("GENESIS", cfg.MasterSeal)
 
 	mux := http.NewServeMux()
@@ -705,27 +651,28 @@ func main() {
 	mux.HandleFunc("/api/v1/gotham", handleGotham)
 	mux.HandleFunc("/api/v1/apex/process", handleApex)
 	mux.HandleFunc("/api/v1/sandbox/brummel", handleBrummel)
-	mux.HandleFunc("/api/v1/sandbox/pumuckl", handlePumuckl)
-	mux.HandleFunc("/api/v1/sandbox/kingghost", handleKingGhost)
 	mux.HandleFunc("/ws/telemetry", handleWebSocket)
 
+	// Root-Redirect
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
-			"service": "GO_BLUE_CORE", "version": "26.2.0",
-			"naming": "Grummel | Dr.Snuggles | BieneMaja | Pumuckl | King_Ghost",
+			"service": "GO_BLUE_CORE",
+			"version": "26.1.0",
+			"docs":    "/health, /stats, /ledger/inspect, /api/v1/apex/process",
 		})
 	})
 
 	handler := loggingMiddleware(corsMiddleware(mux))
-	sort.Strings(coreSignatures)
+
+	// Sortiere Signaturen für deterministische Ausgabe
+	sort.Strings(signatures)
 
 	log.Println("═══════════════════════════════════════════════════════════════")
-	log.Printf("🚀 GO BLUE CORE v26.2.0 startet auf Port %s", cfg.Port)
+	log.Printf("🚀 GO BLUE CORE v26.1.0 startet auf Port %s", cfg.Port)
 	log.Printf("   Seal:       %s", cfg.ExpectedSeal)
 	log.Printf("   Ledger-Cap: %d", cfg.LedgerCap)
-	log.Printf("   Core-Sigs:  %d", len(coreSignatures))
-	log.Printf("   Sub-Ents:   %d", len(subEntities))
+	log.Printf("   Signaturen: %d", len(signatures))
 	log.Println("═══════════════════════════════════════════════════════════════")
 
 	if err := http.ListenAndServe(":"+cfg.Port, handler); err != nil {
