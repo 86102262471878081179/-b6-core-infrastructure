@@ -1,0 +1,17 @@
+[package]
+name = "rust_kernel"
+version = "2.1.0"
+edition = "2021"
+authors = ["B6-Core Lead Architect (Odin Ultra Root)"]
+description = "B6-Core WORM Vault Engine — Monster Edition"
+
+[dependencies]
+axum = { version = "0.7", features = ["macros", "json"] }
+tokio = { version = "1.38", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha3 = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
+tower-http = { version = "0.5", features = ["trace", "cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
