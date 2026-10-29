@@ -25,11 +25,4 @@ COPY --from=builder /usr/src/rust_kernel/target/release/b6_kernel_node /app/b6_k
 RUN mkdir -p /var/lib/worm_vault
 VOLUME ["/var/lib/worm_vault"]
 
-EXPOSE 8080
-ENV RUST_LOG=info
-
-# Healthcheck (wird aktuell ins Leere laufen, da CLI-Tool, aber schadet nicht)
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
-
 CMD ["/app/b6_kernel_node"]
